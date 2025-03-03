@@ -15,8 +15,9 @@ import {
   u16,
   u32,
 } from "@yume-chan/struct";
-import { once } from "node:events";
-import { connect, TLSSocket } from "node:tls";
+
+import * as net from "node:net";
+import { Socket } from "node:net";
 import { ClipboardChunk } from "./clipboard.js";
 import { MessageType } from "./message-type.js";
 import { bufferExactReadable, startsWith } from "./utils.js";
@@ -61,6 +62,14 @@ const MessageMouseMove = struct(
   { littleEndian: false }
 );
 
+const MessageMouseWheel = struct(
+  {
+    xDelta: u16,
+    yDelta: u16,
+  },
+  { littleEndian: false }
+);
+
 const MessageEnter = struct(
   {
     x: u16,
@@ -77,7 +86,7 @@ async function readMessage(readable: BufferedReadableStream) {
   return await readable.readExactly(length);
 }
 
-function writeMessage(socket: TLSSocket, message: Uint8Array) {
+function writeMessage(socket: Socket, message: Uint8Array) {
   const size = new Uint8Array(4);
   setUint32BigEndian(size, 0, message.length);
   socket.write(size);
@@ -95,14 +104,11 @@ export class InputLeapClient {
     width: number,
     height: number
   ) {
-    const socket = connect(port, host, {
-      rejectUnauthorized: false,
+    const socket = new net.Socket();
+    await new Promise<void>((resolve, reject) => {
+      socket.connect(port, host, () => resolve());
+      socket.on('error', reject);
     });
-    await once(socket, "secureConnect");
-
-    const serverCertificate = socket.getPeerCertificate();
-    console.log("Server SHA256 Fingerprint:", serverCertificate.fingerprint256);
-    console.log("Server SHA1 Fingerprint:", serverCertificate.fingerprint);
 
     const readable = ReadableStream.from<Uint8Array>(socket);
     const buffered = new BufferedReadableStream(readable);
@@ -153,6 +159,7 @@ export class InputLeapClient {
       }
 
       if (startsWith(buffer, MessageType.InfoAck)) {
+        console.log('Input Leap server connection established');
         return new InputLeapClient(socket, buffered);
       }
 
@@ -166,7 +173,7 @@ export class InputLeapClient {
     }
   }
 
-  #socket: TLSSocket;
+  #socket: Socket;
   #keepAliveTimeout: NodeJS.Timeout;
 
   #lastSequenceNumber = 0;
@@ -202,6 +209,11 @@ export class InputLeapClient {
     return this.#onMouseUp.event;
   }
 
+  #onMouseWheel = new EventEmitter<{ xDelta: number; yDelta: number }>();
+  get onMouseWheel() {
+    return this.#onMouseWheel.event;
+  }
+
   #onClipboard = new EventEmitter<string>();
   get onClipboard() {
     return this.#onClipboard.event;
@@ -209,8 +221,12 @@ export class InputLeapClient {
 
   #lastClipboard = "";
 
-  constructor(socket: TLSSocket, readable: BufferedReadableStream) {
+  constructor(socket: Socket, readable: BufferedReadableStream) {
     this.#socket = socket;
+
+    socket.on('close', () => {
+      console.log('Input Leap server connection ended');
+    });
 
     this.#keepAliveTimeout = setTimeout(() => {
       this.#writeMessage(MessageType.KeepAlive);
@@ -260,12 +276,29 @@ export class InputLeapClient {
           continue;
         }
 
+        if (startsWith(buffer, MessageType.MouseWheel)) {
+          const message = MessageMouseWheel.deserialize(
+            bufferExactReadable(buffer, MessageType.MouseWheel.length)
+          );
+          this.#onMouseWheel.fire({
+            xDelta: message.xDelta,
+            yDelta: message.yDelta
+          });
+          continue;
+        }
+
         if (startsWith(buffer, MessageType.Clipboard)) {
           const result = this.#clipboard.write(buffer);
           if (result && result !== this.#lastClipboard) {
             this.#lastClipboard = result;
             this.#onClipboard.fire(result);
           }
+          continue;
+        }
+
+        if (startsWith(buffer, MessageType.ClipboardOperation) ||
+          startsWith(buffer, MessageType.ScreenOperation)) {
+          // These operations are currently not implemented but acknowledged
           continue;
         }
 
@@ -320,3 +353,4 @@ export class InputLeapClient {
     }
   }
 }
+

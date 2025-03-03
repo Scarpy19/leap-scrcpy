@@ -9,7 +9,7 @@ import {
 } from "@yume-chan/scrcpy";
 import { ReadableStream, WritableStream } from "@yume-chan/stream-extra";
 import { createReadStream } from "node:fs";
-import { HidStylus } from "./hid.js";
+import { HidMouse } from "./hid-mouse.js";
 import { InputLeapClient } from "./input-leap/client.js";
 
 const address = process.argv[2] ?? "localhost:24800";
@@ -54,7 +54,7 @@ if (!videoStream) {
   throw new Error("Video stream not found");
 }
 
-let stylus: HidStylus | undefined;
+let mouse: HidMouse | undefined;
 let inputLeapClient: InputLeapClient | undefined;
 
 for await (const chunk of videoStream.stream) {
@@ -63,13 +63,13 @@ for await (const chunk of videoStream.stream) {
       h264ParseConfiguration(chunk.data);
 
     if (!inputLeapClient) {
-      stylus = new HidStylus(width, height);
+      mouse = new HidMouse(width, height);
       scrcpyClient.controller!.uHidCreate({
         id: 0,
-        data: HidStylus.Descriptor,
+        data: HidMouse.Descriptor,
         vendorId: 0,
         productId: 0,
-        name: "Stylus",
+        name: "Mouse",
       });
 
       inputLeapClient = await InputLeapClient.connect(
@@ -81,44 +81,52 @@ for await (const chunk of videoStream.stream) {
       );
 
       inputLeapClient.onEnter(({ x, y }) => {
-        stylus!.enter();
-        stylus!.move(x, y);
+        mouse!.move(x, y);
         scrcpyClient.controller!.uHidInput({
           id: 0,
-          data: stylus!.report,
+          data: mouse!.report,
         });
       });
 
       inputLeapClient.onLeave(() => {
-        stylus!.leave();
+        mouse!.resetDeltas();
         scrcpyClient.controller!.uHidInput({
           id: 0,
-          data: stylus!.report,
+          data: mouse!.report,
         });
       });
 
       inputLeapClient.onMouseMove(({ x, y }) => {
-        stylus!.move(x, y);
+        mouse!.move(x, y);
         scrcpyClient.controller!.uHidInput({
           id: 0,
-          data: stylus!.report,
+          data: mouse!.report,
         });
       });
 
       inputLeapClient.onMouseDown((button) => {
-        stylus!.buttonDown(button);
+        mouse!.buttonDown(button);
         scrcpyClient.controller!.uHidInput({
           id: 0,
-          data: stylus!.report,
+          data: mouse!.report,
         });
       });
 
       inputLeapClient.onMouseUp((button) => {
-        stylus!.buttonUp(button);
+        mouse!.buttonUp(button);
         scrcpyClient.controller!.uHidInput({
           id: 0,
-          data: stylus!.report,
+          data: mouse!.report,
         });
+      });
+
+      inputLeapClient.onMouseWheel(({ xDelta, yDelta }) => {
+        mouse!.scroll(yDelta);
+        scrcpyClient.controller!.uHidInput({
+          id: 0,
+          data: mouse!.report,
+        });
+        mouse!.resetDeltas();
       });
 
       inputLeapClient.onClipboard((data) => {
@@ -137,7 +145,7 @@ for await (const chunk of videoStream.stream) {
         })
       );
     } else {
-      stylus!.setSize(height, height);
+      mouse!.setSize(width, height);
       inputLeapClient.setSize(width, height);
     }
   }

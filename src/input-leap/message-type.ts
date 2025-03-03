@@ -9,7 +9,10 @@ export const MessageType = {
   MouseMove: encodeUtf8("DMMV"),
   MouseDown: encodeUtf8("DMDN"),
   MouseUp: encodeUtf8("DMUP"),
+  MouseWheel: encodeUtf8("DMWM"),
   Enter: encodeUtf8("CINN"),
   Leave: encodeUtf8("COUT"),
   Clipboard: encodeUtf8("DCLP"),
+  ClipboardOperation: encodeUtf8("CROP"),
+  ScreenOperation: encodeUtf8("DSOP"),
 } as const;
